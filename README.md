@@ -19,10 +19,10 @@
 * When `BUTTON0` is pressed:
   * Make a measurement using the `AIN0` channel of the ADC.
     * Use the `ADC_REF_INTERNAL` reference voltage.
-    * Linearly map 0-3.0 V measured on `AIN0` to an LED blink rate of 1-5 Hz (e.g., 0 V -> 1 Hz; 3.0 V -> 5 Hz).
+    * Linearly map 0-3.0 V measured on `AIN0` to an `LED1` blink rate of 1-5 Hz (e.g., 0 V -> 1 Hz; 3.0 V -> 5 Hz).
   + Make a measurement using the `AIN1` channel of the ADC.
     * User the `ADC_REF_VDD_1_4` reference voltage.
-    * Linearly map 0-3.0 V measuremed on `AIN1` to an LED ontime of 5-10 s (e.g., 0 V -> 5 s, 3.0 V -> 10 s)
+    * Linearly map 0-3.0 V measuremed on `AIN1` to an `LED1` ontime of 5-10 s (e.g., 0 V -> 5 s, 3.0 V -> 10 s)
   * Illuminate `LED1` at the blink rate and ontime duration specified by the ADC measurements in response to `BUTTON0` being pressed.
 
 ### Testing
