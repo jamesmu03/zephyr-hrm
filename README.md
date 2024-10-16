@@ -1,4 +1,4 @@
-# Lab: Zephyr ADC
+# Lab: Zephyr ADC & PWM
 
 ## Fork and Clone the Repository
 
@@ -62,3 +62,44 @@ In a new development branch, add the following functionality to your firmware:
 
 * Merge your branch for the buffered differential ADC sampling into your main branch.
 * Create a Merge Request back to the parent repository `main` branch and assign it to Dr. Palmeri.
+
+## Part III: Steady-State PWM Output
+
+### Firmware Functional Specifications
+
+* Using the RMS value that you calculate from your differential ADC input in the previous lab, map this RMS value to scale the maximum brightness of `LED2` using a PWM output.  
+  * For example: 
+    * If `Vpp` of the sinusoidal input is 0 V, then `LED2` should be off (0% duty cycle).  
+    * If `Vpp` of the sinusoidal input is 2 V, then `LED2` should be at maximum brightness (100% duty cycle).  
+  * Intermediate `Vpp` values should map to intermediate brightnesses by linearly scaling the duty cycle of the PWM output.
+* Update your state diagram to include the new functionality.
+
+### Testing
+
+* Quantify the linearity of the maximum brightness of `LED2` as a function of the calculated RMS of the differential input voltage.
+* Present your data and analysis in the technical report Jupyter notebook.
+
+## Part IV: Sinusoidal Modulation of PWM Output
+
+### Firmware Functional Specifications
+
+* Create a branch from your branch for Part III to implement this Part IV functionality.
+* Instead of holding the `LED2` brightness constant, modululate the brighness as a sinusoid at the same frequency as `LED1` from Part II, but 180 degrees out of phase.
+* Set the maximum sinusoidal brightness to match that of the calculated RMS value.
+* Update your state diagram to include the new functionality.
+* Merge this branch back into your Part III branch once it is working (as verified by the testing below).
+
+### Testing
+
+* Calculate the frequenecy of the sinusoidal output (mean +/- 95% CI) relative to the nominal frequency.
+* Calculate the linearity of the relationship between the RMS value of the differential input voltage and the maximum brightness of `LED2` when modulated as a sinusoid.
+* Present your data and analysis in your Jupyter notebook.
+
+## Discussion
+
+Include discussion in your technical report about how your PWM outputs for maximum brightness (and sinusoidal fade) compare to the nominal values/waveforms.
+
+## What to Submit
+
+* Merge your Part III branch, which should include your Part IV development branch, into your `main` branch.
+* Your Merge Request will reflect these latest commits.
