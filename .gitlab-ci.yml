@@ -14,9 +14,9 @@ state_diagram:
       test -f $CI_PROJECT_DIR/state_diagram.puml
       test -f $CI_PROJECT_DIR/state_diagram.png
 
-calc_rms:
+calc_rms_library:
   stage: test
   script:
     - |+
-      test -f calc_rms.h
-      test -f calc_rms.c
+      test -f $CI_PROJECT_DIR/src/calc_rms.h
+      test -f $CI_PROJECT_DIR/src/calc_rms.c

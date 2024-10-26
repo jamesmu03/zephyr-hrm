@@ -1,9 +1,11 @@
 # Lab: Zephyr ADC & PWM
 
+The code in this repository has been built against `v2.6.2` of the Zephyr SDK.  You should use this version of the SDK when building your code.  :warning: If you use `v2.7.0` or later, you may encounter issues with some of the SMF macros and input syntax that has changed.
+
 ## Fork and Clone the Repository
 
 * Fork this repository to your own GitLab account.
-* Add Dr. Palmeri and your TAs as `Maintainer`s to the GitLab repository.
+* Add Dr. Palmeri (`mlp6`) and your TAs (`hys3`, `cls157`, `bjl40`) as `Maintainers` to your GitLab repository.
 * Use good git version control practices when working on this project.
 
 ## Part I: Single-Channel ADC Sampling
@@ -61,7 +63,10 @@ In a new development branch, add the following functionality to your firmware:
 ## Merge Your Development Branch and create a Merge Request
 
 * Merge your branch for the buffered differential ADC sampling into your main branch.
-* Create a Merge Request back to the parent repository `main` branch and assign it to Dr. Palmeri.
+* Create a Merge Request back to the `main` branch **in your repository** (not the parent repository that you forked from)
+  * Assign this Merge Request to yourself
+  * Assign Dr. Palmeri as a `Reviewer`.
+  * Merge your Merge Request once Dr. Palmeri has reviewed your code.
 
 ## Part III: Steady-State PWM Output
 
@@ -101,5 +106,6 @@ Include discussion in your technical report about how your PWM outputs for maxim
 
 ## What to Submit
 
-* Merge your Part III branch, which should include your Part IV development branch, into your `main` branch.
-* Your Merge Request will reflect these latest commits.
+* Merge your Part III branch, which should include your Part IV development branch, into the `main` branch in your repository.
+* Create an annotated tag of your `main` branch with all part of this labe merged in called `ready_for_grading`.
+* Dr. Palmeri will clone all of your forks and grade them based on the `ready_for_grading` tag.
