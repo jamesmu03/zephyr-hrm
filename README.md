@@ -63,10 +63,7 @@ In a new development branch, add the following functionality to your firmware:
 ## Merge Your Development Branch and create a Merge Request
 
 * Merge your branch for the buffered differential ADC sampling into your main branch.
-* Create a Merge Request back to the `main` branch **in your repository** (not the parent repository that you forked from)
-  * Assign this Merge Request to yourself
-  * Assign Dr. Palmeri as a `Reviewer`.
-  * Merge your Merge Request once Dr. Palmeri has reviewed your code.
+* Send Dr. Palmeri a message on Teams that your ADC firmware is ready for review.
 
 ## Part III: Steady-State PWM Output
 
