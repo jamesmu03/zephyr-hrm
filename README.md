@@ -47,15 +47,15 @@ In a new development branch, add the following functionality to your firmware:
 * Choose the reference voltage, gain, bit depth and acquisition time to adequately sample at least 20 cycles of a 500 Hz sinusoidal signal (Vpp = 2 V) with a 1 V DC offset (i.e., sinusoid voltage rage is 0-2 V).
 * Implement the `extra_sampling` buffering of the ADC for this differential sinusoidal signal measurement so that all of the data is stored in an array in a single `adc_read()` call.
 * Disable the acquisition button while your device is reading the analog voltages and performing calculations.
-* Write a **library** called `calc_rms` that calculates the RMS value of the buffered ADC samples.
+* Write a **library** called `calc_rms` that calculates the **AC** RMS (i.e., the RMS value with the DC component removed) value of the buffered ADC samples.
 * Write log messages to your serial terminal that:
-  * Display a hex array of the buffered ADC samples.  :warning: Be careful for the log message memory consumption!
-  * Display the RMS value of the buffered ADC samples.
+  * Display a hex array of the buffered ADC samples.  :warning: Be careful for the log message memory consumption!  Remember that the data will be saved using 2s complement.
+  * Display the AC RMS value of the buffered ADC samples.
 * Update your state diagram for this new functionality.
 
 ### Testing
 
-* Input a 500 Hz sinusoidal signal with a 1 V DC offset into the differential ADC input.
+* Input a 500 Hz sinusoidal signal with a 1 V DC offset, and a 2 V Vpp into the differential ADC input.
 * Create a plot of your input signal and the buffered ADC samples (using the hex array output).  Discuss any differences between the input signal and your sampled signal.
 * Compare your calculated RMS value to the expected RMS value of the sinusoidal signal.  Discuss any differences between your calculated RMS value and the expected RMS value.
 * Add this analysis to [testing/technical_report.ipynb](testing/technical_report.ipynb).
@@ -69,7 +69,7 @@ In a new development branch, add the following functionality to your firmware:
 
 ### Firmware Functional Specifications
 
-* Using the RMS value that you calculate from your differential ADC input in the previous lab, map this RMS value to scale the maximum brightness of `LED2` using a PWM output.  
+* Using the AC RMS value that you calculate from your differential ADC input in the previous lab, map this RMS value to scale the maximum brightness of `LED2` using a PWM output.  
   * For example: 
     * If `Vpp` of the sinusoidal input is 0 V, then `LED2` should be off (0% duty cycle).  
     * If `Vpp` of the sinusoidal input is 2 V, then `LED2` should be at maximum brightness (100% duty cycle).  
