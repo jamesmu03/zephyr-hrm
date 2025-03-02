@@ -1,7 +1,5 @@
 # Lab: Zephyr ADC & PWM
 
-The code in this repository has been built against `v2.6.2` of the Zephyr SDK.  You should use this version of the SDK when building your code.  :warning: If you use `v2.7.0` or later, you may encounter issues with some of the SMF macros and input syntax that has changed.
-
 ## Fork and Clone the Repository
 
 * Fork this repository to your own GitLab account.
