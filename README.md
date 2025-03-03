@@ -113,7 +113,9 @@ called `part4`, add the following functionality to your firmware:
 ### Firmware Functional Specifications
 
 * Modulate the brighness of `LED3` to match the read sinusoidal voltage on `AIN1` and `AIN2` after pressing `BUTTON2`, as implemented and testing in Part II, **with as little latency (phase distortion) between the input and output signals**.
-* **You may have to change your approach to ADC sampling and buffering from Part II to achieve this!**
+* The blocking nature of the buffered acquisition scheme of Part II will not be ameable to realtime modulation of the PWM output.
+  * **Consider if the `async` / `callback` ADC sampling approach is appropriate for this task,** or
+  * Consider a non-buffered ADC sampling approach that uses a timer to sample the ADC at a fixed rate.
 * Set the minumum and maximum sinusoidal brightnesses to be PWM duty cycles of 0 and 100%, respectively.
 * Update your state diagram to include the new functionality.
 
