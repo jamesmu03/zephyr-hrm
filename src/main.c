@@ -1,13 +1,13 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>  // CONFIG_GPIO=y
+#include <zephyr/drivers/gpio.h> 
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/adc.h> // CONFIG_ADC=y
 #include <zephyr/drivers/pwm.h> // CONFIG_PWM=y
 #include <zephyr/smf.h> // CONFIG_SMF=y
 
-#include "calc_rms.h"
+#include "calc_cycles.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 

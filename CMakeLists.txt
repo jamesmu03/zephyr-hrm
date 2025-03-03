@@ -5,4 +5,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zephyr-adc-pwm-lab)
 
 # make sure to add the source code for new libraries
-target_sources(app PRIVATE src/main.c src/calc_rms.c)
+target_sources(app PRIVATE src/main.c src/calc_cycles.c)

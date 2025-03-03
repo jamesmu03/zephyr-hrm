@@ -18,5 +18,5 @@ calc_rms_library:
   stage: test
   script:
     - |+
-      test -f $CI_PROJECT_DIR/src/calc_rms.h
-      test -f $CI_PROJECT_DIR/src/calc_rms.c
+      test -f $CI_PROJECT_DIR/src/calc_cycles.h
+      test -f $CI_PROJECT_DIR/src/calc_cycles.c
