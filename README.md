@@ -25,7 +25,7 @@
 * When `BUTTON0` is pressed:
   * Make a measurement using the `AIN0` channel of the ADC.
     * Use the `ADC_REF_INTERNAL` reference voltage.
-    * Linearly map 0-3.0 V measured on `AIN0` this differential input to an `LED1` blink rate of 1-5 Hz (e.g., 0 V -> 1 Hz; 3.0 V -> 5 Hz) with a duty cycle of 10%.
+    * Linearly map 0-3.0 V measured on the `AIN0` input to an `LED1` blink rate of 1-5 Hz (e.g., 0 V -> 1 Hz; 3.0 V -> 5 Hz) with a duty cycle of 10%.
     * `LED1` should remaining blinking for 5 seconds after the button has been pressed.
 
 ### Testing
