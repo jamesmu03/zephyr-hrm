@@ -1,8 +1,12 @@
 / {
 	aliases {
         // add your aliases here; examples:
-        heartbeat = &led0;  // this corresponds to LED1 on the board
-        getdata = &button0;  // this corresponds to SW1 on the board
-        ledout = &led1;
+        // heartbeat = &led0;  // this corresponds to LED1 on the board
+        // getdata = &button0;  // this corresponds to SW1 on the board
+        // ledout = &led1;
+        led0 = &led0;
+        led1 = &led1;
+        sw0 = &button0;
+        adc0 = &adc0;
 	};
 };
