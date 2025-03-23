@@ -135,6 +135,7 @@ void state_reading_adc_run(struct smf_ctx *ctx)
     struct adc_sequence sequence = {
         .buffer = &buf,
         .buffer_size = sizeof(buf), // bytes
+        .resolution = 12, // Ensure this matches your ADC resolution
     };
 
     LOG_DBG("Initializing ADC sequence for %s (channel %d)", adc_vadc.dev->name, adc_vadc.channel_id);
@@ -148,8 +149,9 @@ void state_reading_adc_run(struct smf_ctx *ctx)
         LOG_DBG("Raw ADC Buffer: %d", buf);
     }
 
-    int32_t val_mv = buf;  // val_mv is now the raw ADC value
-    ret = adc_raw_to_millivolts_dt(&adc_vadc, &val_mv); // remember that the vadc struct contains all the DT parameters
+    // Convert raw ADC value to millivolts
+    int32_t val_mv = buf;
+    ret = adc_raw_to_millivolts_dt(&adc_vadc, &val_mv);
     if (ret < 0) {
         LOG_ERR("Failed to convert raw ADC value to millivolts (%d)", ret);
     } else {
