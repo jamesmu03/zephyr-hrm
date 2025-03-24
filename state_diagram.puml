@@ -1,12 +1,34 @@
+// Written by James Mu
+// Template from Dr. Palmeri
+
 @startuml
 
-[*] -> example_state
+[*] -> init
 
-state example_state {
-    example_state_entry -> example_state_run
-    example_state_run : Do Stuff
-    example_state_run -> example_state_exit : Event Trigger
-    example_state_exit : Do Exit Stuff
+state init {
+    init_run: set up
 }
+
+state idle {
+    idle_run: wait
+}
+
+state reading_adc {
+    reading_adc_run: read adc
+    reading_adc_run: convert adc to mV
+}
+
+state blinking {
+    blinking_enter: convert mV to Hz
+    blinking_enter: start timers to blink at Hz
+    blinking_run: wait
+}
+
+init -> idle : init done
+idle -d-> reading_adc : button press
+reading_adc -> blinking : done reading adc
+blinking -> idle : done blinking
+blinking_enter -> blinking_run : start timers
+idle -> [*] : give up lol
 
 @enduml
