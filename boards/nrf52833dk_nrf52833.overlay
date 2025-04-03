@@ -1,28 +1,26 @@
-// This is the root level of the DT
 / {
     zephyr,user {
-        io-channels = <&adc 0>; // need to "activate" these channels for IO usage
+        io-channels = <&adc 0>;
     };
     aliases {
-        heartbeat = &led0;
-        ledout = &led1;
-        getdata = &button0;
+        sw0 = &button0;
+        led0 = &led0;
+        led1 = &led1;
         vadc = &vadc;
     };
 };
 
-// This is modifying the existing ADC node in the DT
 &adc {
     #address-cells = <1>;
     #size-cells = <0>;
 
     vadc: channel@0 {
-        reg = <0>;  // channel number
-        zephyr,reference = "ADC_REF_INTERNAL";  // voltage ref for SA (0.6 V)
-        zephyr,gain = "ADC_GAIN_1_5"; // gain factor to scale ref voltage (1/gain)
+        reg = <0>;
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,gain = "ADC_GAIN_1_5";
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,input-positive = <NRF_SAADC_AIN0>; // P0.02
-        zephyr,resolution = <12>;  // bit depth
+        zephyr,input-positive = <NRF_SAADC_AIN0>;
+        zephyr,resolution = <12>;
     };
-    status = "okay"; // enable the ADC
+    status = "okay";
 };
