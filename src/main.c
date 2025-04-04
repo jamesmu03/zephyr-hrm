@@ -233,12 +233,38 @@ void adc_read_run(void *o) {
 }
 
 void diff_adc_read_run(void *o) {
-    LOG_INF("Stub: DIFF_ADC_READ state");
+    LOG_INF("Entering DIFF_ADC_READ state");
+    gpio_pin_interrupt_configure_dt(&button1_spec, GPIO_INT_DISABLE);
+
+    struct adc_sequence_options options = {
+        .extra_samplings = DIFF_SAMPLES - 1,
+        .interval_us = 10000,
+    };
+    struct adc_sequence sequence = {
+        .options = &options,
+        .buffer = system_context.diff_buffer,
+        .buffer_size = sizeof(system_context.diff_buffer),
+    };
+    adc_sequence_init_dt(&adc_vadc_diff_spec, &sequence);
+
+    int ret = adc_read(adc_vadc_diff_spec.dev, &sequence);
+    if (ret < 0) {
+        LOG_ERR("Differential ADC read failed: %d", ret);
+    } else {
+        LOG_INF("Differential ADC sampling complete, %d samples", DIFF_SAMPLES);
+    }
+
+    gpio_pin_interrupt_configure_dt(&button1_spec, GPIO_INT_EDGE_TO_ACTIVE);
     smf_set_state(SMF_CTX(&system_context), &states[DIFF_PROCESS]);
 }
 
 void diff_process_run(void *o) {
-    LOG_INF("Stub: DIFF_PROCESS state");
+    LOG_INF("Entering DIFF_PROCESS state");
+    LOG_HEXDUMP_INF(system_context.diff_buffer, sizeof(system_context.diff_buffer), "Raw ADC Buffer:");
+
+    system_context.diff_cycles = calculate_cycles(system_context.diff_buffer, DIFF_SAMPLES);
+    LOG_INF("Calculated cycles: %d", system_context.diff_cycles);
+
     system_context.button1_pressed = false;
     smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
 }
