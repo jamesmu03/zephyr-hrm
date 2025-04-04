@@ -1,34 +1,35 @@
-// Written by James Mu
-// Template from Dr. Palmeri
+// Updated by GitHub Copilot
 
 @startuml
 
 [*] -> init
 
 state init {
-    init_run: set up
+    init_run: Configure GPIO, ADC, and button interrupt
+    init_run: Transition to IDLE
 }
 
 state idle {
-    idle_run: wait
+    idle_run: Wait for button press
 }
 
-state reading_adc {
-    reading_adc_run: read adc
-    reading_adc_run: convert adc to mV
+state adc_read {
+    adc_read_run: Read ADC value
+    adc_read_run: Convert ADC value to mV
+    adc_read_run: Calculate LED1 blink period
+    adc_read_run: Transition to BLINKING
 }
 
 state blinking {
-    blinking_enter: convert mV to Hz
-    blinking_enter: start timers to blink at Hz
-    blinking_run: wait
+    blinking_entry: Start blinking timers
+    blinking_run: Blink LED1
+    blinking_run: Stop blinking after duration
 }
 
-init -> idle : init done
-idle -d-> reading_adc : button press
-reading_adc -> blinking : done reading adc
-blinking -> idle : done blinking
-blinking_enter -> blinking_run : start timers
-idle -> [*] : give up lol
+init -> idle : Initialization complete
+idle -d-> adc_read : Button press detected
+adc_read -> blinking : ADC read complete
+blinking -> idle : Blinking duration complete
+idle -> [*] : System shutdown
 
 @enduml
