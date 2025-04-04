@@ -43,6 +43,10 @@ void blinking_run(void *o);
 
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 
+void blink_duration_handler(struct k_timer *timer);
+void led_on_handler(struct k_timer *timer);
+void led_off_handler(struct k_timer *timer);
+
 // System Context
 struct system_context {
     struct smf_ctx ctx;
@@ -67,6 +71,7 @@ static void configure_gpio(const struct gpio_dt_spec *spec, gpio_flags_t flags) 
         return;
     }
     gpio_pin_configure_dt(spec, flags);
+    LOG_INF("Configured GPIO: %s, pin: %d", spec->port->name, spec->pin);
 }
 
 static void configure_adc(const struct adc_dt_spec *spec) {
@@ -77,6 +82,8 @@ static void configure_adc(const struct adc_dt_spec *spec) {
     int err = adc_channel_setup_dt(spec);
     if (err < 0) {
         LOG_ERR("Failed to setup ADC channel: %d", err);
+    } else {
+        LOG_INF("ADC channel configured successfully");
     }
 }
 
@@ -86,17 +93,23 @@ K_THREAD_DEFINE(heartbeat_id, 1024, heartbeat_thread, NULL, NULL, NULL, 5, 0, 0)
 void heartbeat_thread(void *a, void *b, void *c) {
     while (1) {
         gpio_pin_set_dt(&led0_spec, 1);
+        // LOG_INF("Heartbeat LED ON");
         k_msleep(HEARTBEAT_ON_TIME);
         gpio_pin_set_dt(&led0_spec, 0);
+        // LOG_INF("Heartbeat LED OFF");
         k_msleep(HEARTBEAT_OFF_TIME);
     }
 }
 
 // Timers
 K_TIMER_DEFINE(blink_timer, blink_handler, NULL);
+K_TIMER_DEFINE(blink_duration_timer, blink_duration_handler, NULL);
+K_TIMER_DEFINE(led_on_timer, led_on_handler, NULL);
+K_TIMER_DEFINE(led_off_timer, led_off_handler, NULL);
 
 // Main Function
 void main(void) {
+    LOG_INF("System initialization started");
     smf_set_initial(SMF_CTX(&system_context), &states[INIT]);
     while (1) {
         smf_run_state(SMF_CTX(&system_context));
@@ -106,6 +119,7 @@ void main(void) {
 
 // Callback Functions
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    LOG_INF("Button pressed, transitioning to ADC_READ state");
     system_context.button0_pressed = true;
     smf_set_state(SMF_CTX(&system_context), &states[ADC_READ]);
 }
@@ -115,6 +129,27 @@ void blink_handler(struct k_timer *timer) {
     static bool led_state = false;
     led_state = !led_state;
     gpio_pin_set_dt(&led1_spec, led_state);
+    LOG_INF("LED1 state toggled: %s", led_state ? "ON" : "OFF");
+}
+
+void blink_duration_handler(struct k_timer *timer) {
+    LOG_INF("Blink duration timer expired, stopping LED blinking");
+    gpio_pin_set_dt(&led1_spec, 0); // Ensure LED is off
+    k_timer_stop(&led_on_timer);
+    k_timer_stop(&led_off_timer);
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]); // Transition to IDLE state
+}
+
+void led_on_handler(struct k_timer *timer) {
+    gpio_pin_set_dt(&led1_spec, 1); // Turn LED on
+    LOG_INF("LED1 turned ON");
+    uint32_t off_delay = system_context.led1_blink_period_ms * LED_DUTY_CYCLE / 100;
+    k_timer_start(&led_off_timer, K_MSEC(off_delay), K_NO_WAIT); // Schedule LED off
+}
+
+void led_off_handler(struct k_timer *timer) {
+    gpio_pin_set_dt(&led1_spec, 0); // Turn LED off
+    LOG_INF("LED1 turned OFF");
 }
 
 // State Functions
@@ -123,6 +158,8 @@ void init_run(void *o) {
     configure_gpio(&button0_spec, GPIO_INPUT);
     configure_gpio(&led0_spec, GPIO_OUTPUT);
     configure_gpio(&led1_spec, GPIO_OUTPUT);
+
+    gpio_pin_set_dt(&led1_spec, 0);
 
     int err = gpio_pin_interrupt_configure_dt(&button0_spec, GPIO_INT_EDGE_TO_ACTIVE);
     if (err < 0) {
@@ -141,7 +178,7 @@ void init_run(void *o) {
 }
 
 void idle_run(void *o) {
-    // Do Nothing.
+    // LOG_INF("System is in IDLE state");
 }
 
 void adc_read_run(void *o) {
@@ -170,23 +207,20 @@ void adc_read_run(void *o) {
 
 void blinking_entry(void *o) {
     LOG_INF("Entering BLINKING state");
-    uint32_t on_time = system_context.led1_blink_period_ms * LED_DUTY_CYCLE / 100;
-    k_timer_start(&blink_timer, K_MSEC(on_time), K_MSEC(system_context.led1_blink_period_ms));
-    LOG_INF("Blinking started, period: %d ms, on-time: %d ms", system_context.led1_blink_period_ms, on_time);
+
+    uint32_t blink_period = system_context.led1_blink_period_ms;
+    uint32_t on_time = blink_period * LED_DUTY_CYCLE / 100;
+
+    // Start the blink duration timer (5 seconds)
+    k_timer_start(&blink_duration_timer, K_MSEC(LED_BLINK_DURATION_MS), K_NO_WAIT);
+
+    // Start the LED on timer (repeats every blink period)
+    k_timer_start(&led_on_timer, K_NO_WAIT, K_MSEC(blink_period));
+
+    LOG_INF("Blinking started: period = %d ms, on-time = %d ms, duration = %d ms",
+            blink_period, on_time, LED_BLINK_DURATION_MS);
 }
 
 void blinking_run(void *o) {
-    static uint64_t start_time = 0;
-    if (start_time == 0) {
-        start_time = k_uptime_get();
-        LOG_INF("Blinking run started, uptime: %llu ms", start_time);
-    }
-    if (k_uptime_get() - start_time >= LED_BLINK_DURATION_MS) {
-        LOG_INF("Blinking duration exceeded, stopping blink timer");
-        k_timer_stop(&blink_timer);
-        gpio_pin_set_dt(&led1_spec, 0);
-        start_time = 0;
-        LOG_INF("Exiting BLINKING state, transitioning to IDLE state");
-        smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
-    }
+    // LOG_INF("System is in BLINKING state");
 }
