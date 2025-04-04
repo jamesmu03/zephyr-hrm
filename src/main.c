@@ -1,17 +1,17 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h> 
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/adc.h> // CONFIG_ADC=y
-#include <zephyr/drivers/pwm.h> // CONFIG_PWM=y
-#include <zephyr/smf.h> // CONFIG_SMF=y
+#include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/pwm.h>
+#include <zephyr/smf.h>
 
 #include "calc_cycles.h"
 
-LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-// Define macros for heartbeat and LED control
+// Constants
 #define HEARTBEAT_PERIOD_MS 1000
 #define HEARTBEAT_DUTY_CYCLE 25
 #define HEARTBEAT_ON_TIME (HEARTBEAT_PERIOD_MS * HEARTBEAT_DUTY_CYCLE / 100)
@@ -19,255 +19,213 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 #define LED_BLINK_DURATION_MS 5000
 #define LED_DUTY_CYCLE 10
 
-// ADC configuration macro
-#define ADC_DT_SPEC_GET_BY_ALIAS(adc_alias)                    \
-{                                                              \
-    .dev = DEVICE_DT_GET(DT_PARENT(DT_ALIAS(adc_alias))),      \
-    .channel_id = DT_REG_ADDR(DT_ALIAS(adc_alias)),            \
-    ADC_CHANNEL_CFG_FROM_DT_NODE(DT_ALIAS(adc_alias))          \
+// GPIO and ADC Specifications
+static const struct gpio_dt_spec led0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec led1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
+static const struct gpio_dt_spec button0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+static struct gpio_callback button0_cb;
+
+static const struct adc_dt_spec adc_vadc_spec = {
+    .dev = DEVICE_DT_GET(DT_PARENT(DT_ALIAS(vadc))),
+    .channel_id = DT_REG_ADDR(DT_ALIAS(vadc)),
+    ADC_CHANNEL_CFG_FROM_DT_NODE(DT_ALIAS(vadc))
+};
+
+// Function Prototypes
+void heartbeat_thread(void *a, void *b, void *c);
+void blink_handler(struct k_timer *timer);
+
+void init_run(void *o);
+void idle_run(void *o);
+void adc_read_run(void *o);
+void blinking_entry(void *o);
+void blinking_run(void *o);
+
+void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+
+void blink_duration_handler(struct k_timer *timer);
+void led_on_handler(struct k_timer *timer);
+void led_off_handler(struct k_timer *timer);
+
+// System Context
+struct system_context {
+    struct smf_ctx ctx;
+    bool button0_pressed;
+    int32_t adc_voltage_mv;
+    uint32_t led1_blink_period_ms;
+} system_context;
+
+// State Machine
+enum state { INIT, IDLE, ADC_READ, BLINKING };
+static const struct smf_state states[] = {
+    [INIT] = SMF_CREATE_STATE(NULL, init_run, NULL, NULL, NULL),
+    [IDLE] = SMF_CREATE_STATE(NULL, idle_run, NULL, NULL, NULL),
+    [ADC_READ] = SMF_CREATE_STATE(NULL, adc_read_run, NULL, NULL, NULL),
+    [BLINKING] = SMF_CREATE_STATE(blinking_entry, blinking_run, NULL, NULL, NULL),
+};
+
+// Helper Functions
+static void configure_gpio(const struct gpio_dt_spec *spec, gpio_flags_t flags) {
+    if (!device_is_ready(spec->port)) {
+        LOG_ERR("GPIO device not ready: %s", spec->port->name);
+        return;
+    }
+    gpio_pin_configure_dt(spec, flags);
+    LOG_INF("Configured GPIO: %s, pin: %d", spec->port->name, spec->pin);
 }
 
-// Declare function prototypes
-void heartbeat_thread(void);
-void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
-void state_init_run(struct smf_ctx *ctx);
-void state_idle_run(struct smf_ctx *ctx);
-void state_reading_adc_run(struct smf_ctx *ctx);
-void state_blinking_enter(struct smf_ctx *ctx);
-void state_blinking_run(struct smf_ctx *ctx);
-void timer1_handler(struct k_timer *timer);
-void timer2_handler(struct k_timer *timer);
-void timer3_handler(struct k_timer *timer);
-void setup(void);
+static void configure_adc(const struct adc_dt_spec *spec) {
+    if (!device_is_ready(spec->dev)) {
+        LOG_ERR("ADC device not ready");
+        return;
+    }
+    int err = adc_channel_setup_dt(spec);
+    if (err < 0) {
+        LOG_ERR("Failed to setup ADC channel: %d", err);
+    } else {
+        LOG_INF("ADC channel configured successfully");
+    }
+}
 
-// Define global variables and device tree-based hardware structs
-const struct gpio_dt_spec heartbeat_led = GPIO_DT_SPEC_GET(DT_ALIAS(heartbeat), gpios);
-const struct gpio_dt_spec led_out = GPIO_DT_SPEC_GET(DT_ALIAS(ledout), gpios);
-const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(getdata), gpios);
-static struct gpio_callback button_cb_data;
+// Heartbeat Thread
+K_THREAD_DEFINE(heartbeat_id, 1024, heartbeat_thread, NULL, NULL, NULL, 5, 0, 0);
 
-// ADC configuration
-static const struct adc_dt_spec adc_vadc = ADC_DT_SPEC_GET_BY_ALIAS(vadc);
-
-// Global variable to store ADC value
-static int32_t adc_value = 0;
-
-// Define states for the state machine
-enum state {
-    STATE_INIT,
-    STATE_IDLE,
-    STATE_READING_ADC,
-    STATE_BLINKING
-};
-
-// State machine states
-struct smf_state states[] = {
-    [STATE_INIT] = SMF_CREATE_STATE(NULL, state_init_run, NULL, NULL, NULL),
-    [STATE_IDLE] = SMF_CREATE_STATE(NULL, state_idle_run, NULL, NULL, NULL),
-    [STATE_READING_ADC] = SMF_CREATE_STATE(NULL, state_reading_adc_run, NULL, NULL, NULL),
-    [STATE_BLINKING] = SMF_CREATE_STATE(state_blinking_enter, state_blinking_run, NULL, NULL, NULL),
-};
-
-// State machine context
-struct smf_ctx smf;
-
-// Heartbeat thread configuration
-#define HEARTBEAT_THREAD_STACK_SIZE 1024
-#define HEARTBEAT_THREAD_PRIORITY 5
-
-K_THREAD_DEFINE(heartbeat_thread_id, HEARTBEAT_THREAD_STACK_SIZE, heartbeat_thread, NULL, NULL, NULL, HEARTBEAT_THREAD_PRIORITY, 0, 0);
+void heartbeat_thread(void *a, void *b, void *c) {
+    while (1) {
+        gpio_pin_set_dt(&led0_spec, 1);
+        // LOG_INF("Heartbeat LED ON");
+        k_msleep(HEARTBEAT_ON_TIME);
+        gpio_pin_set_dt(&led0_spec, 0);
+        // LOG_INF("Heartbeat LED OFF");
+        k_msleep(HEARTBEAT_OFF_TIME);
+    }
+}
 
 // Timers
-K_TIMER_DEFINE(timer1, timer1_handler, NULL);
-K_TIMER_DEFINE(timer2, timer2_handler, NULL);
-K_TIMER_DEFINE(timer3, timer3_handler, NULL);
+K_TIMER_DEFINE(blink_timer, blink_handler, NULL);
+K_TIMER_DEFINE(blink_duration_timer, blink_duration_handler, NULL);
+K_TIMER_DEFINE(led_on_timer, led_on_handler, NULL);
+K_TIMER_DEFINE(led_off_timer, led_off_handler, NULL);
 
-// Main function
-int main(void)
-{
-    LOG_INF("Main function started");
-    smf_set_initial(&smf, &states[STATE_INIT]);
-
+// Main Function
+void main(void) {
+    LOG_INF("System initialization started");
+    smf_set_initial(SMF_CTX(&system_context), &states[INIT]);
     while (1) {
-        smf_run_state(&smf);
-        k_sleep(K_MSEC(100));
+        smf_run_state(SMF_CTX(&system_context));
+        k_msleep(10);
     }
 }
 
-// Heartbeat thread function
-void heartbeat_thread(void)
-{
-    LOG_INF("Heartbeat thread started");
-    while (1) {
-        gpio_pin_set_dt(&heartbeat_led, 1);
-        k_sleep(K_MSEC(HEARTBEAT_ON_TIME));
-        gpio_pin_set_dt(&heartbeat_led, 0);
-        k_sleep(K_MSEC(HEARTBEAT_OFF_TIME));
+// Callback Functions
+void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    if (system_context.button0_pressed) {
+        LOG_INF("Button press ignored, already being processed");
+        return; // Ignore subsequent button presses
     }
+
+    LOG_INF("Button pressed, transitioning to ADC_READ state");
+    system_context.button0_pressed = true;
+    smf_set_state(SMF_CTX(&system_context), &states[ADC_READ]);
 }
 
-// Button pressed callback function
-void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-    LOG_INF("Button pressed, changing state to READING_ADC");
-    smf_set_state(&smf, &states[STATE_READING_ADC]);
+// Timer Functions
+void blink_handler(struct k_timer *timer) {
+    static bool led_state = false;
+    led_state = !led_state;
+    gpio_pin_set_dt(&led1_spec, led_state);
+    LOG_INF("LED1 state toggled: %s", led_state ? "ON" : "OFF");
 }
 
-// State machine state functions
-void state_init_run(struct smf_ctx *ctx)
-{
-    LOG_INF("State: INIT");
-    setup();
-    smf_set_state(ctx, &states[STATE_IDLE]);
+void blink_duration_handler(struct k_timer *timer) {
+    LOG_INF("Blink duration timer expired, stopping LED blinking");
+    gpio_pin_set_dt(&led1_spec, 0); // Ensure LED is off
+    k_timer_stop(&led_on_timer);
+    k_timer_stop(&led_off_timer);
+    system_context.button0_pressed = false;
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]); // Transition to IDLE state
 }
 
-void state_idle_run(struct smf_ctx *ctx)
-{
-    LOG_INF("State: IDLE");
-    k_sleep(K_MSEC(1000));
+void led_on_handler(struct k_timer *timer) {
+    gpio_pin_set_dt(&led1_spec, 1); // Turn LED on
+    LOG_INF("LED1 turned ON");
+    uint32_t off_delay = system_context.led1_blink_period_ms * LED_DUTY_CYCLE / 100;
+    k_timer_start(&led_off_timer, K_MSEC(off_delay), K_NO_WAIT); // Schedule LED off
 }
 
-void state_reading_adc_run(struct smf_ctx *ctx)
-{
-    LOG_INF("State: READING_ADC");
+void led_off_handler(struct k_timer *timer) {
+    gpio_pin_set_dt(&led1_spec, 0); // Turn LED off
+    LOG_INF("LED1 turned OFF");
+}
 
+// State Functions
+void init_run(void *o) {
+    LOG_INF("Entering INIT state");
+    configure_gpio(&button0_spec, GPIO_INPUT);
+    configure_gpio(&led0_spec, GPIO_OUTPUT);
+    configure_gpio(&led1_spec, GPIO_OUTPUT);
+
+    gpio_pin_set_dt(&led1_spec, 0);
+
+    int err = gpio_pin_interrupt_configure_dt(&button0_spec, GPIO_INT_EDGE_TO_ACTIVE);
+    if (err < 0) {
+        LOG_ERR("Failed to configure button interrupt: %d", err);
+    } else {
+        LOG_INF("Button interrupt configured successfully");
+    }
+    gpio_init_callback(&button0_cb, button0_callback, BIT(button0_spec.pin));
+    gpio_add_callback_dt(&button0_spec, &button0_cb);
+
+    configure_adc(&adc_vadc_spec);
+    LOG_INF("ADC configured successfully");
+
+    LOG_INF("Exiting INIT state, transitioning to IDLE state");
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
+}
+
+void idle_run(void *o) {
+    // LOG_INF("System is in IDLE state");
+}
+
+void adc_read_run(void *o) {
+    LOG_INF("Entering ADC_READ state");
     int16_t buf;
     struct adc_sequence sequence = {
         .buffer = &buf,
-        .buffer_size = sizeof(buf), // bytes
-        .resolution = 12, // Ensure this matches your ADC resolution
+        .buffer_size = sizeof(buf),
     };
+    adc_sequence_init_dt(&adc_vadc_spec, &sequence);
 
-    LOG_DBG("Initializing ADC sequence for %s (channel %d)", adc_vadc.dev->name, adc_vadc.channel_id);
-
-    (void)adc_sequence_init_dt(&adc_vadc, &sequence);
-
-    int ret = adc_read(adc_vadc.dev, &sequence);
+    int ret = adc_read(adc_vadc_spec.dev, &sequence);
     if (ret < 0) {
-        LOG_ERR("ADC read failed (%d)", ret);
+        LOG_ERR("ADC read failed: %d", ret);
     } else {
-        LOG_DBG("Raw ADC Buffer: %d", buf);
+        system_context.adc_voltage_mv = buf;
+        adc_raw_to_millivolts_dt(&adc_vadc_spec, &system_context.adc_voltage_mv);
+        LOG_INF("ADC Value (mV): %d", system_context.adc_voltage_mv);
+        system_context.led1_blink_period_ms = 1000 - (system_context.adc_voltage_mv * 800 / 3000);
+        LOG_INF("Calculated LED1 blink period: %d ms", system_context.led1_blink_period_ms);
     }
-
-    // Convert raw ADC value to millivolts
-    int32_t val_mv = buf;
-    ret = adc_raw_to_millivolts_dt(&adc_vadc, &val_mv);
-    if (ret < 0) {
-        LOG_ERR("Failed to convert raw ADC value to millivolts (%d)", ret);
-    } else {
-        LOG_INF("ADC Value (mV): %d", val_mv);
-    }
-
-    // Store the ADC value in a global variable for use in the blinking state
-    adc_value = val_mv;
-
-    smf_set_state(ctx, &states[STATE_BLINKING]);
+    LOG_INF("Exiting ADC_READ state, transitioning to BLINKING state");
+    smf_set_state(SMF_CTX(&system_context), &states[BLINKING]);
 }
 
-void state_blinking_enter(struct smf_ctx *ctx)
-{
-    LOG_INF("State: BLINKING_ENTER");
+void blinking_entry(void *o) {
+    LOG_INF("Entering BLINKING state");
 
-    int32_t voltage = adc_value; // Use the global adc_value
-    int32_t blink_rate_hz = 1 + (voltage * 4 / 3000); // Map 0-3000 mV to 1-5 Hz
-    int32_t blink_period_ms = 1000 / blink_rate_hz;
-    int32_t blink_on_time = blink_period_ms * LED_DUTY_CYCLE / 100;
+    uint32_t blink_period = system_context.led1_blink_period_ms;
+    uint32_t on_time = blink_period * LED_DUTY_CYCLE / 100;
 
-    LOG_INF("Blink rate: %d Hz, Blink period: %d ms, Blink on time: %d ms", blink_rate_hz, blink_period_ms, blink_on_time);
+    // Start the blink duration timer (5 seconds)
+    k_timer_start(&blink_duration_timer, K_MSEC(LED_BLINK_DURATION_MS), K_NO_WAIT);
 
-    k_timer_start(&timer1, K_MSEC(LED_BLINK_DURATION_MS), K_NO_WAIT);
-    LOG_INF("Timer1 started for %d ms", LED_BLINK_DURATION_MS);
+    // Start the LED on timer (repeats every blink period)
+    k_timer_start(&led_on_timer, K_NO_WAIT, K_MSEC(blink_period));
 
-    k_timer_start(&timer2, K_NO_WAIT, K_MSEC(blink_period_ms));
-    LOG_INF("Timer2 started with period %d ms", blink_period_ms);
-
-    k_timer_start(&timer3, K_MSEC(blink_on_time), K_MSEC(blink_period_ms));
-    LOG_INF("Timer3 started with initial delay %d ms and period %d ms", blink_on_time, blink_period_ms);
+    LOG_INF("Blinking started: period = %d ms, on-time = %d ms, duration = %d ms",
+            blink_period, on_time, LED_BLINK_DURATION_MS);
 }
 
-void state_blinking_run(struct smf_ctx *ctx)
-{
-    LOG_INF("State: BLINKING_RUN");
-}
-
-// Timer handlers
-void timer1_handler(struct k_timer *timer)
-{
-    LOG_INF("Timer1 handler called, stopping timers 2 and 3");
-    k_timer_stop(&timer2);
-    LOG_INF("Timer2 stopped");
-    k_timer_stop(&timer3);
-    LOG_INF("Timer3 stopped");
-    smf_set_state(&smf, &states[STATE_IDLE]);
-}
-
-void timer2_handler(struct k_timer *timer)
-{
-    LOG_INF("Timer2 handler called, turning LED on");
-    gpio_pin_set_dt(&led_out, 1);
-}
-
-void timer3_handler(struct k_timer *timer)
-{
-    LOG_INF("Timer3 handler called, turning LED off");
-    gpio_pin_set_dt(&led_out, 0);
-}
-
-// Setup function to initialize GPIOs and ADC
-void setup(void)
-{
-    // Setup GPIO for heartbeat LED
-    if (!device_is_ready(heartbeat_led.port)) {
-        LOG_ERR("Heartbeat LED GPIO not ready");
-        return;
-    }
-
-    int ret = gpio_pin_configure_dt(&heartbeat_led, GPIO_OUTPUT);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure heartbeat LED GPIO");
-    }
-
-    // Setup GPIO for LED output
-    if (!device_is_ready(led_out.port)) {
-        LOG_ERR("LED output GPIO not ready");
-        return;
-    }
-
-    ret = gpio_pin_configure_dt(&led_out, GPIO_OUTPUT);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure LED output GPIO");
-    } else {
-        gpio_pin_set_dt(&led_out, 0); // Ensure LED is off during initialization
-    }
-
-    // Setup GPIO for button input
-    if (!device_is_ready(button.port)) {
-        LOG_ERR("Button GPIO not ready");
-        return;
-    }
-
-    ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure button GPIO");
-    }
-
-    ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
-    if (ret < 0) {
-        LOG_ERR("Failed to configure button interrupt");
-    }
-
-    gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
-    gpio_add_callback(button.port, &button_cb_data);
-
-    // Setup ADC
-    if (!device_is_ready(adc_vadc.dev)) {
-        LOG_ERR("ADC controller device(s) not ready");
-        return;
-    }
-
-    ret = adc_channel_setup_dt(&adc_vadc);
-    if (ret < 0) {
-        LOG_ERR("Could not setup ADC channel (%d)", ret);
-        return;
-    }
+void blinking_run(void *o) {
+    // LOG_INF("System is in BLINKING state");
 }
