@@ -18,31 +18,33 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define HEARTBEAT_OFF_TIME (HEARTBEAT_PERIOD_MS - HEARTBEAT_ON_TIME)
 #define LED_BLINK_DURATION_MS 5000
 #define LED_DUTY_CYCLE 10
+#define SAMPLING_DURATION_US 2000000
+#define INTERVAL_US 5000
+#define DIFF_SAMPLES (SAMPLING_DURATION_US / INTERVAL_US)
 
 // GPIO and ADC Specifications
 static const struct gpio_dt_spec led0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec button0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+static const struct gpio_dt_spec button1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios);
 static struct gpio_callback button0_cb;
+static struct gpio_callback button1_cb;
 
-static const struct adc_dt_spec adc_vadc_spec = {
-    .dev = DEVICE_DT_GET(DT_PARENT(DT_ALIAS(vadc))),
-    .channel_id = DT_REG_ADDR(DT_ALIAS(vadc)),
-    ADC_CHANNEL_CFG_FROM_DT_NODE(DT_ALIAS(vadc))
-};
+static const struct adc_dt_spec adc_vadc_spec = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
+static const struct adc_dt_spec adc_vadc_diff_spec = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 1);
 
 // Function Prototypes
 void heartbeat_thread(void *a, void *b, void *c);
 void blink_handler(struct k_timer *timer);
-
 void init_run(void *o);
 void idle_run(void *o);
 void adc_read_run(void *o);
+void diff_adc_read_run(void *o);
+void diff_process_run(void *o);
 void blinking_entry(void *o);
 void blinking_run(void *o);
-
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
-
+void button1_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 void blink_duration_handler(struct k_timer *timer);
 void led_on_handler(struct k_timer *timer);
 void led_off_handler(struct k_timer *timer);
@@ -51,16 +53,21 @@ void led_off_handler(struct k_timer *timer);
 struct system_context {
     struct smf_ctx ctx;
     bool button0_pressed;
+    bool button1_pressed;
     int32_t adc_voltage_mv;
     uint32_t led1_blink_period_ms;
+    int16_t diff_buffer[DIFF_SAMPLES];
+    int32_t diff_cycles;
 } system_context;
 
 // State Machine
-enum state { INIT, IDLE, ADC_READ, BLINKING };
+enum state { INIT, IDLE, ADC_READ, DIFF_ADC_READ, DIFF_PROCESS, BLINKING };
 static const struct smf_state states[] = {
     [INIT] = SMF_CREATE_STATE(NULL, init_run, NULL, NULL, NULL),
     [IDLE] = SMF_CREATE_STATE(NULL, idle_run, NULL, NULL, NULL),
     [ADC_READ] = SMF_CREATE_STATE(NULL, adc_read_run, NULL, NULL, NULL),
+    [DIFF_ADC_READ] = SMF_CREATE_STATE(NULL, diff_adc_read_run, NULL, NULL, NULL),
+    [DIFF_PROCESS] = SMF_CREATE_STATE(NULL, diff_process_run, NULL, NULL, NULL),
     [BLINKING] = SMF_CREATE_STATE(blinking_entry, blinking_run, NULL, NULL, NULL),
 };
 
@@ -89,14 +96,11 @@ static void configure_adc(const struct adc_dt_spec *spec) {
 
 // Heartbeat Thread
 K_THREAD_DEFINE(heartbeat_id, 1024, heartbeat_thread, NULL, NULL, NULL, 5, 0, 0);
-
 void heartbeat_thread(void *a, void *b, void *c) {
     while (1) {
         gpio_pin_set_dt(&led0_spec, 1);
-        // LOG_INF("Heartbeat LED ON");
         k_msleep(HEARTBEAT_ON_TIME);
         gpio_pin_set_dt(&led0_spec, 0);
-        // LOG_INF("Heartbeat LED OFF");
         k_msleep(HEARTBEAT_OFF_TIME);
     }
 }
@@ -120,13 +124,22 @@ void main(void) {
 // Callback Functions
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
     if (system_context.button0_pressed) {
-        LOG_INF("Button press ignored, already being processed");
-        return; // Ignore subsequent button presses
+        LOG_INF("Button0 press ignored, already being processed");
+        return;
     }
-
-    LOG_INF("Button pressed, transitioning to ADC_READ state");
+    LOG_INF("Button0 pressed, transitioning to ADC_READ state");
     system_context.button0_pressed = true;
     smf_set_state(SMF_CTX(&system_context), &states[ADC_READ]);
+}
+
+void button1_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    if (system_context.button1_pressed) {
+        LOG_INF("Button1 press ignored, already being processed");
+        return;
+    }
+    LOG_INF("Button1 pressed, transitioning to DIFF_ADC_READ state");
+    system_context.button1_pressed = true;
+    smf_set_state(SMF_CTX(&system_context), &states[DIFF_ADC_READ]);
 }
 
 // Timer Functions
@@ -139,22 +152,22 @@ void blink_handler(struct k_timer *timer) {
 
 void blink_duration_handler(struct k_timer *timer) {
     LOG_INF("Blink duration timer expired, stopping LED blinking");
-    gpio_pin_set_dt(&led1_spec, 0); // Ensure LED is off
+    gpio_pin_set_dt(&led1_spec, 0);
     k_timer_stop(&led_on_timer);
     k_timer_stop(&led_off_timer);
     system_context.button0_pressed = false;
-    smf_set_state(SMF_CTX(&system_context), &states[IDLE]); // Transition to IDLE state
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
 }
 
 void led_on_handler(struct k_timer *timer) {
-    gpio_pin_set_dt(&led1_spec, 1); // Turn LED on
+    gpio_pin_set_dt(&led1_spec, 1);
     LOG_INF("LED1 turned ON");
     uint32_t off_delay = system_context.led1_blink_period_ms * LED_DUTY_CYCLE / 100;
-    k_timer_start(&led_off_timer, K_MSEC(off_delay), K_NO_WAIT); // Schedule LED off
+    k_timer_start(&led_off_timer, K_MSEC(off_delay), K_NO_WAIT);
 }
 
 void led_off_handler(struct k_timer *timer) {
-    gpio_pin_set_dt(&led1_spec, 0); // Turn LED off
+    gpio_pin_set_dt(&led1_spec, 0);
     LOG_INF("LED1 turned OFF");
 }
 
@@ -162,6 +175,7 @@ void led_off_handler(struct k_timer *timer) {
 void init_run(void *o) {
     LOG_INF("Entering INIT state");
     configure_gpio(&button0_spec, GPIO_INPUT);
+    configure_gpio(&button1_spec, GPIO_INPUT);
     configure_gpio(&led0_spec, GPIO_OUTPUT);
     configure_gpio(&led1_spec, GPIO_OUTPUT);
 
@@ -169,14 +183,24 @@ void init_run(void *o) {
 
     int err = gpio_pin_interrupt_configure_dt(&button0_spec, GPIO_INT_EDGE_TO_ACTIVE);
     if (err < 0) {
-        LOG_ERR("Failed to configure button interrupt: %d", err);
+        LOG_ERR("Failed to configure button0 interrupt: %d", err);
     } else {
-        LOG_INF("Button interrupt configured successfully");
+        LOG_INF("Button0 interrupt configured successfully");
     }
     gpio_init_callback(&button0_cb, button0_callback, BIT(button0_spec.pin));
     gpio_add_callback_dt(&button0_spec, &button0_cb);
 
+    err = gpio_pin_interrupt_configure_dt(&button1_spec, GPIO_INT_EDGE_TO_ACTIVE);
+    if (err < 0) {
+        LOG_ERR("Failed to configure button1 interrupt: %d", err);
+    } else {
+        LOG_INF("Button1 interrupt configured successfully");
+    }
+    gpio_init_callback(&button1_cb, button1_callback, BIT(button1_spec.pin));
+    gpio_add_callback_dt(&button1_spec, &button1_cb);
+
     configure_adc(&adc_vadc_spec);
+    configure_adc(&adc_vadc_diff_spec);
     LOG_INF("ADC configured successfully");
 
     LOG_INF("Exiting INIT state, transitioning to IDLE state");
@@ -210,16 +234,49 @@ void adc_read_run(void *o) {
     smf_set_state(SMF_CTX(&system_context), &states[BLINKING]);
 }
 
+void diff_adc_read_run(void *o) {
+    LOG_INF("Entering DIFF_ADC_READ state");
+    gpio_pin_interrupt_configure_dt(&button1_spec, GPIO_INT_DISABLE);
+
+    struct adc_sequence_options options = {
+        .extra_samplings = DIFF_SAMPLES - 1,
+        .interval_us = INTERVAL_US,
+    };
+    struct adc_sequence sequence = {
+        .options = &options,
+        .buffer = system_context.diff_buffer,
+        .buffer_size = sizeof(system_context.diff_buffer),
+    };
+    adc_sequence_init_dt(&adc_vadc_diff_spec, &sequence);
+
+    int ret = adc_read(adc_vadc_diff_spec.dev, &sequence);
+    if (ret < 0) {
+        LOG_ERR("Differential ADC read failed: %d", ret);
+    } else {
+        LOG_INF("Differential ADC sampling complete, %d samples", DIFF_SAMPLES);
+    }
+
+    gpio_pin_interrupt_configure_dt(&button1_spec, GPIO_INT_EDGE_TO_ACTIVE);
+    smf_set_state(SMF_CTX(&system_context), &states[DIFF_PROCESS]);
+}
+
+void diff_process_run(void *o) {
+    LOG_INF("Entering DIFF_PROCESS state");
+    LOG_HEXDUMP_INF(system_context.diff_buffer, sizeof(system_context.diff_buffer), "Raw ADC Buffer:");
+
+    system_context.diff_cycles = calculate_cycles(system_context.diff_buffer, DIFF_SAMPLES);
+    LOG_INF("Calculated cycles: %d", system_context.diff_cycles);
+
+    system_context.button1_pressed = false;
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
+}
+
 void blinking_entry(void *o) {
     LOG_INF("Entering BLINKING state");
-
     uint32_t blink_period = system_context.led1_blink_period_ms;
     uint32_t on_time = blink_period * LED_DUTY_CYCLE / 100;
 
-    // Start the blink duration timer (5 seconds)
     k_timer_start(&blink_duration_timer, K_MSEC(LED_BLINK_DURATION_MS), K_NO_WAIT);
-
-    // Start the LED on timer (repeats every blink period)
     k_timer_start(&led_on_timer, K_NO_WAIT, K_MSEC(blink_period));
 
     LOG_INF("Blinking started: period = %d ms, on-time = %d ms, duration = %d ms",
