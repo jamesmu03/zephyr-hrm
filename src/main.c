@@ -119,6 +119,11 @@ void main(void) {
 
 // Callback Functions
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    if (system_context.button0_pressed) {
+        LOG_INF("Button press ignored, already being processed");
+        return; // Ignore subsequent button presses
+    }
+
     LOG_INF("Button pressed, transitioning to ADC_READ state");
     system_context.button0_pressed = true;
     smf_set_state(SMF_CTX(&system_context), &states[ADC_READ]);
@@ -137,6 +142,7 @@ void blink_duration_handler(struct k_timer *timer) {
     gpio_pin_set_dt(&led1_spec, 0); // Ensure LED is off
     k_timer_stop(&led_on_timer);
     k_timer_stop(&led_off_timer);
+    system_context.button0_pressed = false;
     smf_set_state(SMF_CTX(&system_context), &states[IDLE]); // Transition to IDLE state
 }
 
@@ -200,7 +206,6 @@ void adc_read_run(void *o) {
         system_context.led1_blink_period_ms = 1000 - (system_context.adc_voltage_mv * 800 / 3000);
         LOG_INF("Calculated LED1 blink period: %d ms", system_context.led1_blink_period_ms);
     }
-    system_context.button0_pressed = false;
     LOG_INF("Exiting ADC_READ state, transitioning to BLINKING state");
     smf_set_state(SMF_CTX(&system_context), &states[BLINKING]);
 }
