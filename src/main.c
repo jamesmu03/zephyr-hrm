@@ -18,7 +18,9 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define HEARTBEAT_OFF_TIME (HEARTBEAT_PERIOD_MS - HEARTBEAT_ON_TIME)
 #define LED_BLINK_DURATION_MS 5000
 #define LED_DUTY_CYCLE 10
-#define DIFF_SAMPLES 200
+#define SAMPLING_DURATION_US 2000000
+#define INTERVAL_US 5000
+#define DIFF_SAMPLES (SAMPLING_DURATION_US / INTERVAL_US)
 
 // GPIO and ADC Specifications
 static const struct gpio_dt_spec led0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
@@ -238,7 +240,7 @@ void diff_adc_read_run(void *o) {
 
     struct adc_sequence_options options = {
         .extra_samplings = DIFF_SAMPLES - 1,
-        .interval_us = 10000,
+        .interval_us = INTERVAL_US,
     };
     struct adc_sequence sequence = {
         .options = &options,
