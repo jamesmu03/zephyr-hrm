@@ -27,9 +27,12 @@ static const struct gpio_dt_spec led0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gp
 static const struct gpio_dt_spec led1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec button0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
 static const struct gpio_dt_spec button1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios);
+static const struct gpio_dt_spec button2_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
 static const struct pwm_dt_spec led2_pwm_spec = PWM_DT_SPEC_GET(DT_ALIAS(pwm1));
+static const struct pwm_dt_spec led3_pwm_spec = PWM_DT_SPEC_GET(DT_ALIAS(pwm2));
 static struct gpio_callback button0_cb;
 static struct gpio_callback button1_cb;
+static struct gpio_callback button2_cb;
 
 static const struct adc_dt_spec adc_vadc_spec = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
 static const struct adc_dt_spec adc_vadc_diff_spec = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 1);
@@ -44,8 +47,10 @@ void diff_adc_read_run(void *o);
 void diff_process_run(void *o);
 void blinking_entry(void *o);
 void blinking_run(void *o);
+void sinusoidal_modulation_run(void *o);
 void button0_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 void button1_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+void button2_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 void blink_duration_handler(struct k_timer *timer);
 void led_on_handler(struct k_timer *timer);
 void led_off_handler(struct k_timer *timer);
@@ -55,6 +60,7 @@ struct system_context {
     struct smf_ctx ctx;
     bool button0_pressed;
     bool button1_pressed;
+    bool modulation_active;
     int32_t adc_voltage_mv;
     uint32_t led1_blink_period_ms;
     int16_t diff_buffer[DIFF_SAMPLES];
@@ -62,7 +68,7 @@ struct system_context {
 } system_context;
 
 // State Machine
-enum state { INIT, IDLE, ADC_READ, DIFF_ADC_READ, DIFF_PROCESS, BLINKING };
+enum state { INIT, IDLE, ADC_READ, DIFF_ADC_READ, DIFF_PROCESS, BLINKING, SINUSOIDAL_MODULATION };
 static const struct smf_state states[] = {
     [INIT] = SMF_CREATE_STATE(NULL, init_run, NULL, NULL, NULL),
     [IDLE] = SMF_CREATE_STATE(NULL, idle_run, NULL, NULL, NULL),
@@ -70,6 +76,7 @@ static const struct smf_state states[] = {
     [DIFF_ADC_READ] = SMF_CREATE_STATE(NULL, diff_adc_read_run, NULL, NULL, NULL),
     [DIFF_PROCESS] = SMF_CREATE_STATE(NULL, diff_process_run, NULL, NULL, NULL),
     [BLINKING] = SMF_CREATE_STATE(blinking_entry, blinking_run, NULL, NULL, NULL),
+    [SINUSOIDAL_MODULATION] = SMF_CREATE_STATE(NULL, sinusoidal_modulation_run, NULL, NULL, NULL),
 };
 
 // Helper Functions
@@ -143,6 +150,17 @@ void button1_callback(const struct device *dev, struct gpio_callback *cb, uint32
     smf_set_state(SMF_CTX(&system_context), &states[DIFF_ADC_READ]);
 }
 
+void button2_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    if (system_context.modulation_active) {
+        LOG_INF("Button2 pressed, stopping sinusoidal modulation");
+        system_context.modulation_active = false;
+    } else {
+        LOG_INF("Button2 pressed, starting sinusoidal modulation");
+        system_context.modulation_active = true;
+        smf_set_state(SMF_CTX(&system_context), &states[SINUSOIDAL_MODULATION]);
+    }
+}
+
 // Timer Functions
 void blink_handler(struct k_timer *timer) {
     static bool led_state = false;
@@ -177,6 +195,7 @@ void init_run(void *o) {
     LOG_INF("Entering INIT state");
     configure_gpio(&button0_spec, GPIO_INPUT);
     configure_gpio(&button1_spec, GPIO_INPUT);
+    configure_gpio(&button2_spec, GPIO_INPUT);
     configure_gpio(&led0_spec, GPIO_OUTPUT);
     configure_gpio(&led1_spec, GPIO_OUTPUT);
 
@@ -199,6 +218,15 @@ void init_run(void *o) {
     }
     gpio_init_callback(&button1_cb, button1_callback, BIT(button1_spec.pin));
     gpio_add_callback_dt(&button1_spec, &button1_cb);
+
+    err = gpio_pin_interrupt_configure_dt(&button2_spec, GPIO_INT_EDGE_TO_ACTIVE);
+    if (err < 0) {
+        LOG_ERR("Failed to configure button2 interrupt: %d", err);
+    } else {
+        LOG_INF("Button2 interrupt configured successfully");
+    }
+    gpio_init_callback(&button2_cb, button2_callback, BIT(button2_spec.pin));
+    gpio_add_callback_dt(&button2_spec, &button2_cb);
 
     configure_adc(&adc_vadc_spec);
     configure_adc(&adc_vadc_diff_spec);
@@ -301,4 +329,40 @@ void blinking_entry(void *o) {
 
 void blinking_run(void *o) {
     // LOG_INF("System is in BLINKING state");
+}
+
+void sinusoidal_modulation_run(void *o) {
+    LOG_INF("Entering SINUSOIDAL_MODULATION state");
+
+    static int16_t adc_value;
+    struct adc_sequence sequence = {
+        .buffer = &adc_value,
+        .buffer_size = sizeof(adc_value),
+    };
+
+    adc_sequence_init_dt(&adc_vadc_diff_spec, &sequence);
+
+    while (system_context.modulation_active) {
+        int ret = adc_read(adc_vadc_diff_spec.dev, &sequence);
+        if (ret < 0) {
+            LOG_ERR("ADC read failed: %d", ret);
+            break;
+        }
+
+        int32_t voltage_mv = adc_value;
+        adc_raw_to_millivolts_dt(&adc_vadc_diff_spec, &voltage_mv);
+
+        uint32_t duty_cycle = CLAMP((voltage_mv * 100) / 3000, 0, 100);
+        LOG_INF("Mapped PWM duty cycle for LED3: %d%%", duty_cycle);
+
+        ret = pwm_set_dt(&led3_pwm_spec, PWM_USEC(1000), PWM_USEC(1000 - (duty_cycle * 10)));
+        if (ret < 0) {
+            LOG_ERR("Failed to set PWM duty cycle for LED3: %d", ret);
+        }
+
+        k_msleep(5);
+    }
+
+    LOG_INF("Exiting SINUSOIDAL_MODULATION state");
+    smf_set_state(SMF_CTX(&system_context), &states[IDLE]);
 }
