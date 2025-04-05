@@ -117,7 +117,7 @@ void main(void) {
     smf_set_initial(SMF_CTX(&system_context), &states[INIT]);
     while (1) {
         smf_run_state(SMF_CTX(&system_context));
-        k_msleep(10);
+        k_msleep(1);
     }
 }
 
