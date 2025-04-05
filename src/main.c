@@ -22,11 +22,12 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define INTERVAL_US 5000
 #define DIFF_SAMPLES (SAMPLING_DURATION_US / INTERVAL_US)
 
-// GPIO and ADC Specifications
+// GPIO PWM ADC Specifications
 static const struct gpio_dt_spec led0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 static const struct gpio_dt_spec button0_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
 static const struct gpio_dt_spec button1_spec = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios);
+static const struct pwm_dt_spec led2_pwm_spec = PWM_DT_SPEC_GET(DT_ALIAS(pwm1));
 static struct gpio_callback button0_cb;
 static struct gpio_callback button1_cb;
 
@@ -117,7 +118,7 @@ void main(void) {
     smf_set_initial(SMF_CTX(&system_context), &states[INIT]);
     while (1) {
         smf_run_state(SMF_CTX(&system_context));
-        k_msleep(10);
+        k_msleep(1);
     }
 }
 
@@ -213,23 +214,38 @@ void idle_run(void *o) {
 
 void adc_read_run(void *o) {
     LOG_INF("Entering ADC_READ state");
+
     int16_t buf;
     struct adc_sequence sequence = {
         .buffer = &buf,
         .buffer_size = sizeof(buf),
     };
+
     adc_sequence_init_dt(&adc_vadc_spec, &sequence);
 
     int ret = adc_read(adc_vadc_spec.dev, &sequence);
     if (ret < 0) {
         LOG_ERR("ADC read failed: %d", ret);
-    } else {
-        system_context.adc_voltage_mv = buf;
-        adc_raw_to_millivolts_dt(&adc_vadc_spec, &system_context.adc_voltage_mv);
-        LOG_INF("ADC Value (mV): %d", system_context.adc_voltage_mv);
-        system_context.led1_blink_period_ms = 1000 - (system_context.adc_voltage_mv * 800 / 3000);
-        LOG_INF("Calculated LED1 blink period: %d ms", system_context.led1_blink_period_ms);
+        return;
     }
+
+    system_context.adc_voltage_mv = buf;
+    adc_raw_to_millivolts_dt(&adc_vadc_spec, &system_context.adc_voltage_mv);
+    LOG_INF("ADC Value (mV): %d", system_context.adc_voltage_mv);
+
+    uint32_t duty_cycle = CLAMP((system_context.adc_voltage_mv * 100) / 3000, 0, 100);
+    LOG_INF("Mapped PWM duty cycle: %d%%", duty_cycle);
+
+    ret = pwm_set_dt(&led2_pwm_spec, PWM_USEC(1000), PWM_USEC(1000 - (duty_cycle * 10)));
+    if (ret < 0) {
+        LOG_ERR("Failed to set PWM duty cycle: %d", ret);
+    } else {
+        LOG_INF("PWM duty cycle set successfully");
+    }
+
+    system_context.led1_blink_period_ms = 1000 - (system_context.adc_voltage_mv * 800 / 3000);
+    LOG_INF("Calculated LED1 blink period: %d ms", system_context.led1_blink_period_ms);
+
     LOG_INF("Exiting ADC_READ state, transitioning to BLINKING state");
     smf_set_state(SMF_CTX(&system_context), &states[BLINKING]);
 }
